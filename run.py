@@ -602,9 +602,18 @@ def main():
             final.save(variant_path, quality=95)
             print(f"    ✓ Сохранён: {variant_path}")
 
-            # Очищаем кэш видеокарты после каждой генерации
+            # Полная очистка GPU между генерациями вариантов.
+            # После pipe() на GPU остаются все модели, загруженные хуками
+            # (VAE, text_encoder и др.). Нужно вернуть всё на CPU.
             if device == "cuda":
+                import gc
                 import torch
+                for name in ["unet", "unet_encoder", "vae",
+                             "text_encoder", "text_encoder_2", "image_encoder"]:
+                    m = getattr(pipe, name, None)
+                    if m is not None:
+                        m.to("cpu")
+                gc.collect()
                 torch.cuda.empty_cache()
 
         # ─── 9. Выбор лучшего результата ───
