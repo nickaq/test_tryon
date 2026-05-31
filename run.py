@@ -352,11 +352,10 @@ def load_pipeline(device, dtype):
         # при загрузке unet_encoder (~5 ГБ) происходит OOM.
         # Фикс: патчим pre_forward хука unet_encoder, чтобы он
         # дополнительно выгружал unet перед своей загрузкой.
-        _unet_offload_hook = pipe.unet._hf_hook
         _orig_ue_pre_forward = pipe.unet_encoder._hf_hook.pre_forward
 
         def _patched_ue_pre_forward(module, *args, **kwargs):
-            _unet_offload_hook.offload()  # unet → CPU
+            pipe.unet.to("cpu")  # unet → CPU
             torch.cuda.empty_cache()
             return _orig_ue_pre_forward(module, *args, **kwargs)
 
