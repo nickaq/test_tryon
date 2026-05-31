@@ -31,7 +31,7 @@ Thumbs.db
 
 # Project-specific ignores
 idm_vton/
-input/*
+
 !input/.gitkeep
-output/*
+
 !output/.gitkeep
