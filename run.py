@@ -321,6 +321,13 @@ def load_pipeline(device, dtype):
     # Перемещаем на устройство с оптимизацией памяти для CUDA
     if device == "cuda":
         print("  Включение оптимизации VRAM (CPU Offload & VAE Slicing)...")
+        # Патч для обхода бага CPU Offload при прямом вызове submodule (encoder_hid_proj)
+        original_forward = pipe.unet.encoder_hid_proj.forward
+        def custom_forward(*args, **kwargs):
+            pipe.unet.encoder_hid_proj.to(device)
+            return original_forward(*args, **kwargs)
+        pipe.unet.encoder_hid_proj.forward = custom_forward
+
         # Настраиваем последовательность выгрузки моделей для экономии VRAM
         pipe.model_cpu_offload_seq = "text_encoder->text_encoder_2->image_encoder->unet_encoder->unet->vae"
         pipe.enable_model_cpu_offload()
