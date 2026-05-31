@@ -61,7 +61,7 @@ fi
 # ─── 2. Установка pip-зависимостей (включая PyTorch) ───
 echo ""
 echo "[2/5] Установка Python-зависимостей..."
-pip install --upgrade pip
+pip install --upgrade pip setuptools wheel ninja
 pip install -r requirements.txt
 echo "  ✓ Зависимости установлены"
 
