@@ -320,17 +320,48 @@ def load_pipeline(device, dtype):
 
     # Перемещаем на устройство с оптимизацией памяти для CUDA
     if device == "cuda":
-        print("  Включение оптимизации VRAM (CPU Offload & VAE Slicing)...")
-        # Патч для обхода бага CPU Offload при прямом вызове submodule (encoder_hid_proj)
-        original_forward = pipe.unet.encoder_hid_proj.forward
-        def custom_forward(*args, **kwargs):
-            pipe.unet.encoder_hid_proj.to(device)
-            return original_forward(*args, **kwargs)
-        pipe.unet.encoder_hid_proj.forward = custom_forward
+        import torch
 
-        # Настраиваем последовательность выгрузки моделей для экономии VRAM
-        pipe.model_cpu_offload_seq = "text_encoder->text_encoder_2->image_encoder->unet_encoder->unet->vae"
+        print("  Включение оптимизации VRAM (CPU Offload & VAE Slicing)...")
+
+        # ── Патч 1: encoder_hid_proj ──
+        # В tryon_pipeline.py (строка ~1726) encoder_hid_proj вызывается
+        # как self.unet.encoder_hid_proj(image_embeds) — напрямую, без
+        # вызова self.unet(), поэтому хук CPU Offload не срабатывает и
+        # encoder_hid_proj остаётся на CPU. Патчим его forward, чтобы
+        # он сам переносился на GPU перед выполнением.
+        _original_ehp_forward = pipe.unet.encoder_hid_proj.forward
+        def _ehp_forward_wrapper(*args, **kwargs):
+            pipe.unet.encoder_hid_proj.to(device)
+            return _original_ehp_forward(*args, **kwargs)
+        pipe.unet.encoder_hid_proj.forward = _ehp_forward_wrapper
+
+        # Включаем CPU Offload с правильной цепочкой моделей
+        pipe.model_cpu_offload_seq = (
+            "text_encoder->text_encoder_2->image_encoder"
+            "->unet_encoder->unet->vae"
+        )
         pipe.enable_model_cpu_offload()
+
+        # ── Патч 2: чередование UNet-ов в цикле денойзинга ──
+        # В цикле на каждом шаге вызываются unet_encoder, затем unet.
+        # Хук CPU Offload — линейная цепочка: pre_forward каждой модели
+        # выгружает только ПРЕДЫДУЩУЮ модель в цепочке.
+        # Для unet_encoder предыдущая — image_encoder, а НЕ unet.
+        # Поэтому на 2-й итерации unet остаётся на GPU (~5 ГБ) и
+        # при загрузке unet_encoder (~5 ГБ) происходит OOM.
+        # Фикс: патчим pre_forward хука unet_encoder, чтобы он
+        # дополнительно выгружал unet перед своей загрузкой.
+        _unet_offload_hook = pipe.unet._hf_hook
+        _orig_ue_pre_forward = pipe.unet_encoder._hf_hook.pre_forward
+
+        def _patched_ue_pre_forward(module, *args, **kwargs):
+            _unet_offload_hook.offload()  # unet → CPU
+            torch.cuda.empty_cache()
+            return _orig_ue_pre_forward(module, *args, **kwargs)
+
+        pipe.unet_encoder._hf_hook.pre_forward = _patched_ue_pre_forward
+
         pipe.enable_vae_slicing()
         pipe.enable_vae_tiling()
     else:
