@@ -318,10 +318,18 @@ def load_pipeline(device, dtype):
     )
     pipe.unet_encoder = unet_encoder
 
-    # Перемещаем на устройство
-    print(f"  Перемещение моделей на {device}...")
-    pipe.to(device)
-    pipe.unet_encoder.to(device)
+    # Перемещаем на устройство с оптимизацией памяти для CUDA
+    if device == "cuda":
+        print("  Включение оптимизации VRAM (CPU Offload & VAE Slicing)...")
+        # Настраиваем последовательность выгрузки моделей для экономии VRAM
+        pipe.model_cpu_offload_seq = "text_encoder->text_encoder_2->image_encoder->unet_encoder->unet->vae"
+        pipe.enable_model_cpu_offload()
+        pipe.enable_vae_slicing()
+        pipe.enable_vae_tiling()
+    else:
+        print(f"  Перемещение моделей на {device}...")
+        pipe.to(device)
+        pipe.unet_encoder.to(device)
 
     print("  ✓ Пайплайн загружен")
     return pipe
@@ -556,6 +564,11 @@ def main():
             variant_path = OUTPUT_DIR / f"result_{i + 1}.png"
             final.save(variant_path, quality=95)
             print(f"    ✓ Сохранён: {variant_path}")
+
+            # Очищаем кэш видеокарты после каждой генерации
+            if device == "cuda":
+                import torch
+                torch.cuda.empty_cache()
 
         # ─── 9. Выбор лучшего результата ───
         print("")
